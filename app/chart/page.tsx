@@ -4,23 +4,16 @@ import Link from "next/link";
 import { useSyncExternalStore } from "react";
 import { ChordChart } from "@/components/ChordChart";
 import { PhoneShell } from "@/components/PhoneShell";
-import { loadChart } from "@/lib/session";
-import type { ChartPayload } from "@/lib/types";
+import { loadChart, subscribeChart } from "@/lib/session";
 
-function subscribe() {
-  return () => {};
-}
+const emptySnapshot = null;
 
-function getSnapshot(): ChartPayload | null {
-  return loadChart();
-}
-
-function getServerSnapshot(): ChartPayload | null {
-  return null;
+function getServerSnapshot() {
+  return emptySnapshot;
 }
 
 export default function ChartPage() {
-  const payload = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const payload = useSyncExternalStore(subscribeChart, loadChart, getServerSnapshot);
 
   if (!payload) {
     return (
@@ -42,5 +35,5 @@ export default function ChartPage() {
     );
   }
 
-  return <ChordChart analysis={payload.analysis} />;
+  return <ChordChart analysis={payload.analysis} image={payload.image} />;
 }

@@ -1,3 +1,10 @@
+export type BarBox = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
 export type HymnalBar = {
   bar: number;
   lyrics?: string;
@@ -5,12 +12,18 @@ export type HymnalBar = {
   guitarChord: string;
   function?: string;
   confidence?: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
 };
 
 export type HymnalAnalysis = {
   title?: string;
   hymnNumber?: string;
   key: string;
+  sharps?: number;
+  flats?: number;
   timeSignature: string;
   bars: HymnalBar[];
   notes?: string;
@@ -21,4 +34,5 @@ export type HymnalAnalysis = {
 
 export type ChartPayload = {
   analysis: HymnalAnalysis;
+  image?: string;
 };

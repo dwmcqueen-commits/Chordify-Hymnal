@@ -10,12 +10,20 @@ import {
 } from "@/lib/guitar/chords";
 import { suggestCapo } from "@/lib/guitar/mapChords";
 import { uniqueChordNames } from "@/lib/guitar/voicings";
+import {
+  displayHymnNumber,
+  displayTimeSignature,
+  displayTitle,
+} from "@/lib/display";
+import { keySignatureInfo } from "@/lib/keySignature";
 import { ChordDiagram } from "./ChordDiagram";
 import { EditChordSheet } from "./EditChordSheet";
 import { PhoneShell } from "./PhoneShell";
+import { ScoreOverlay } from "./ScoreOverlay";
 
 type Props = {
   analysis: HymnalAnalysis;
+  image?: string;
 };
 
 type EditTarget = {
@@ -23,38 +31,45 @@ type EditTarget = {
   display: string;
 };
 
-export function ChordChart({ analysis }: Props) {
+export function ChordChart({ analysis, image }: Props) {
   const [bars, setBars] = useState<HymnalBar[]>(analysis.bars);
   const [transpose, setTranspose] = useState(0);
   const [capo, setCapo] = useState(0);
   const [edit, setEdit] = useState<EditTarget | null>(null);
 
-  const flats = preferFlatsForKey(transposeKey(analysis.key, transpose));
   const soundingKey = transposeKey(analysis.key, transpose);
-  const shift = transpose - capo;
+  const playAsKey = transposeKey(analysis.key, transpose - capo);
+  const pageFlats = preferFlatsForKey(soundingKey);
+  const shapeFlats = preferFlatsForKey(playAsKey);
 
   const displayed = useMemo(
     () =>
       bars.map((bar) => ({
         ...bar,
-        displayChord: transposeChord(bar.guitarChord, shift, flats),
+        displayChord: transposeChord(bar.guitarChord, transpose, pageFlats),
       })),
-    [bars, shift, flats],
+    [bars, transpose, pageFlats],
   );
 
   const liveSuggestion = useMemo(() => {
-    const sounding = bars.map((b) => transposeChord(b.guitarChord, transpose, flats));
+    const sounding = bars.map((b) =>
+      transposeChord(b.guitarChord, transpose, pageFlats),
+    );
     return suggestCapo(sounding, soundingKey);
-  }, [bars, transpose, flats, soundingKey]);
+  }, [bars, transpose, pageFlats, soundingKey]);
 
-  const unique = uniqueChordNames(displayed.map((b) => b.displayChord));
+  const unique = uniqueChordNames(
+    bars.map((bar) =>
+      transposeChord(bar.guitarChord, transpose - capo, shapeFlats),
+    ),
+  );
   const lowConfidence =
     (analysis.overallConfidence ?? 1) < 0.55 ||
     bars.some((b) => (b.confidence ?? 1) < 0.45);
 
   function saveEdit(next: string) {
     if (!edit) return;
-    const base = transposeChord(next, -shift, preferFlatsForKey(analysis.key));
+    const base = transposeChord(next, -transpose, preferFlatsForKey(analysis.key));
     setBars((current) =>
       current.map((bar, i) =>
         i === edit.barIndex ? { ...bar, guitarChord: base } : bar,
@@ -68,6 +83,18 @@ export function ChordChart({ analysis }: Props) {
     rows.push(displayed.slice(i, i + 4));
   }
 
+  const hymnNumber = displayHymnNumber(analysis.hymnNumber);
+  const timeSignature = displayTimeSignature(analysis.timeSignature);
+  const keyInfo = keySignatureInfo(
+    soundingKey,
+    transpose === 0 ? analysis.sharps : undefined,
+    transpose === 0 ? analysis.flats : undefined,
+  );
+  const meta = [hymnNumber ? `#${hymnNumber}` : null, timeSignature]
+    .filter(Boolean)
+    .join("  ·  ");
+  const fewBars = displayed.length > 0 && displayed.length < 4;
+
   return (
     <PhoneShell>
       <header className="safe-t safe-x flex items-start justify-between gap-3 pt-4">
@@ -76,15 +103,28 @@ export function ChordChart({ analysis }: Props) {
             ← New photo
           </Link>
           <h1 className="font-display mt-2 text-3xl leading-tight text-parchment">
-            {analysis.title || "Untitled hymn"}
+            {displayTitle(analysis.title)}
           </h1>
-          <p className="mt-1 text-sm text-parchment-dim">
-            {[analysis.hymnNumber ? `#${analysis.hymnNumber}` : null, soundingKey, analysis.timeSignature]
-              .filter(Boolean)
-              .join("  ·  ")}
-          </p>
+          <p className="mt-1 text-sm text-parchment-dim">{meta}</p>
         </div>
       </header>
+
+      <section className="safe-x mt-4 rounded-2xl border border-brass/40 bg-ink-raised px-4 py-3">
+        <p className="text-xs tracking-[0.18em] text-brass uppercase">Key signature</p>
+        <p className="font-display mt-1 text-2xl text-parchment">{keyInfo.label}</p>
+        <p className="mt-1 text-sm text-parchment-dim">
+          {keyInfo.signature}
+          {keyInfo.accidentals ? `  ·  ${keyInfo.accidentals}` : ""}
+        </p>
+      </section>
+
+      {fewBars && (
+        <div className="safe-x mt-4">
+          <p className="rounded-2xl border border-brass/40 bg-ink-raised px-4 py-3 text-sm text-brass-bright">
+            Only {displayed.length} measure{displayed.length === 1 ? "" : "s"} came back. Crop to the whole page and read it again so every bar is included.
+          </p>
+        </div>
+      )}
 
       {lowConfidence && (
         <div className="safe-x mt-4">
@@ -152,13 +192,31 @@ export function ChordChart({ analysis }: Props) {
         )}
         {capo > 0 && (
           <p className="mt-3 text-xs text-parchment-dim">
-            Sounding {soundingKey}. Play the shapes below with capo {capo}.
+            Page stays in {soundingKey}. Shapes below are {playAsKey} with capo {capo}.
           </p>
         )}
       </section>
 
       <section className="safe-x mt-6">
-        <p className="text-xs tracking-[0.18em] text-brass uppercase">Progression</p>
+        <p className="text-xs tracking-[0.18em] text-brass uppercase">On the page</p>
+        {image ? (
+          <>
+            <div className="mt-3">
+              <ScoreOverlay
+                image={image}
+                bars={displayed}
+                onEdit={(barIndex, display) => setEdit({ barIndex, display })}
+              />
+            </div>
+            <p className="mt-3 text-xs text-parchment-dim">
+              Labels match the printed page. Capo only changes the shapes below.
+            </p>
+          </>
+        ) : null}
+
+        <p className="mt-6 text-xs tracking-[0.18em] text-brass uppercase">
+          Chord sheet
+        </p>
         <div className="mt-3 space-y-4">
           {rows.map((row, rowIndex) => (
             <div key={rowIndex} className="grid grid-cols-4 gap-2">
@@ -167,7 +225,10 @@ export function ChordChart({ analysis }: Props) {
                   key={bar.bar}
                   type="button"
                   onClick={() =>
-                    setEdit({ barIndex: bars.findIndex((b) => b.bar === bar.bar), display: bar.displayChord })
+                    setEdit({
+                      barIndex: bars.findIndex((b) => b.bar === bar.bar),
+                      display: bar.displayChord,
+                    })
                   }
                   className="rounded-xl bg-ink-raised px-1.5 py-2 text-left"
                 >

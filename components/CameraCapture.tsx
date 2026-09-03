@@ -9,43 +9,85 @@ type Props = {
   onSamplePhoto: () => void;
 };
 
+function isPhone() {
+  return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+}
+
+function cameraAttempts(): MediaTrackConstraints[] {
+  if (isPhone()) {
+    return [
+      { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1440 } },
+      { facingMode: "environment" },
+      { width: { ideal: 1920 } },
+    ];
+  }
+  return [
+    { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } },
+    { width: { ideal: 1920 }, height: { ideal: 1080 } },
+    { facingMode: "user" },
+  ];
+}
+
 export function CameraCapture({ onPhoto, onSample, onSamplePhoto }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const captureInput = useRef<HTMLInputElement>(null);
   const libraryInput = useRef<HTMLInputElement>(null);
   const [live, setLive] = useState(false);
+  const [desktop, setDesktop] = useState(false);
   const [cameraError, setCameraError] = useState("");
 
   useEffect(() => {
+    setDesktop(!isPhone());
     let stream: MediaStream | null = null;
     let cancelled = false;
 
     async function start() {
-      if (!navigator.mediaDevices?.getUserMedia) return;
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError("This browser has no webcam API. Choose a photo instead.");
+        return;
+      }
+
+      let lastError = "Camera needs permission.";
+      for (const video of cameraAttempts()) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+          break;
+        } catch (error) {
+          lastError =
+            error instanceof Error ? error.message : "Camera needs permission.";
+        }
+      }
+
+      if (!stream) {
+        setCameraError(
+          desktopHint(lastError),
+        );
+        return;
+      }
+
+      if (cancelled) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      const video = videoRef.current;
+      if (!video) return;
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
-          audio: false,
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        const video = videoRef.current;
-        if (video) {
-          video.srcObject = stream;
-          await video.play();
-          setLive(true);
-        }
+        await video.play();
+        setLive(true);
+        setCameraError("");
       } catch {
-        setCameraError("Camera needs permission — or use the buttons below.");
+        setCameraError("Could not start the webcam preview. Click Photograph to try again.");
       }
     }
 
     void start();
     return () => {
       cancelled = true;
-      stream?.getTracks().forEach((t) => t.stop());
+      stream?.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
@@ -70,16 +112,22 @@ export function CameraCapture({ onPhoto, onSample, onSamplePhoto }: Props) {
         <h1 className="font-display mt-1 text-3xl font-semibold text-parchment">
           Hymnal → Guitar
         </h1>
-        <p className="mt-2 max-w-[20rem] text-sm leading-5 text-parchment-dim">
-          Photograph a hymnal page. We’ll read the piano harmony and show guitar chords.
+        <p className="mt-2 max-w-[22rem] text-sm leading-5 text-parchment-dim">
+          {desktop
+            ? "Hold one hymnal page up to the webcam until the staves fill the frame. Then snap."
+            : "Photograph a hymnal page. We’ll read the piano harmony and show guitar chords."}
         </p>
       </header>
 
       <div className="safe-x flex-1">
-        <div className="relative aspect-[3/4] overflow-hidden rounded-3xl border border-ink-line bg-ink-raised">
+        <div
+          className={`relative overflow-hidden rounded-3xl border border-ink-line bg-ink-raised ${
+            desktop ? "aspect-video" : "aspect-[3/4]"
+          }`}
+        >
           <video
             ref={videoRef}
-            className={`h-full w-full object-cover ${live ? "opacity-100" : "opacity-0"}`}
+            className={`h-full w-full object-contain ${live ? "opacity-100" : "opacity-0"}`}
             playsInline
             muted
             autoPlay
@@ -88,7 +136,9 @@ export function CameraCapture({ onPhoto, onSample, onSamplePhoto }: Props) {
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
               <StaffMark />
               <p className="text-sm text-parchment-dim">
-                Fill the frame with one page. Avoid flash glare.
+                {desktop
+                  ? "Allow the camera, then hold the page steady."
+                  : "Fill the frame with one page. Avoid flash glare."}
               </p>
               {cameraError ? (
                 <p className="text-xs text-brass">{cameraError}</p>
@@ -97,11 +147,16 @@ export function CameraCapture({ onPhoto, onSample, onSamplePhoto }: Props) {
               )}
             </div>
           )}
+          {live && (
+            <p className="absolute bottom-3 left-3 rounded-full bg-ink/80 px-3 py-1 text-[11px] text-parchment">
+              Webcam live
+            </p>
+          )}
         </div>
 
         <ul className="mt-4 space-y-1.5 text-xs text-parchment-dim">
           <li>One page, staves filling the frame</li>
-          <li>No flash — glare hides the notes</li>
+          <li>{desktop ? "Use room light — turn the page toward the webcam" : "No flash — glare hides the notes"}</li>
           <li>Crop to the music if the margins are large</li>
         </ul>
       </div>
@@ -112,7 +167,7 @@ export function CameraCapture({ onPhoto, onSample, onSamplePhoto }: Props) {
           onClick={shutter}
           className="h-14 rounded-full bg-parchment text-base font-semibold text-ink"
         >
-          Photograph hymnal
+          {live ? "Snap webcam photo" : "Photograph hymnal"}
         </button>
         <button
           type="button"
@@ -154,6 +209,16 @@ export function CameraCapture({ onPhoto, onSample, onSamplePhoto }: Props) {
       />
     </div>
   );
+}
+
+function desktopHint(message: string) {
+  if (/permission|denied|notallowed/i.test(message)) {
+    return "Allow the webcam for localhost, then refresh. Or choose a photo.";
+  }
+  if (/notfound|device/i.test(message)) {
+    return "No webcam found. Plug one in, or choose a photo.";
+  }
+  return "Camera needs permission — or use Choose from library.";
 }
 
 function StaffMark() {

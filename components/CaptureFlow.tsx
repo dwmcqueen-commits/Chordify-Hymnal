@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { analyzeHymnal } from "@/lib/analyze";
-import { SAMPLE_ANALYSIS } from "@/lib/fixtures/amazing-grace";
+import { SAMPLE_ANALYSIS, SAMPLE_IMAGE } from "@/lib/fixtures/amazing-grace";
 import { cropAndCompress, blobToDataUrl, type CropRect } from "@/lib/image";
 import { saveChart } from "@/lib/session";
 import { CameraCapture } from "./CameraCapture";
@@ -29,7 +29,7 @@ export function CaptureFlow() {
   }
 
   function onSample() {
-    saveChart({ analysis: SAMPLE_ANALYSIS });
+    saveChart({ analysis: SAMPLE_ANALYSIS, image: SAMPLE_IMAGE });
     router.push("/chart");
   }
 
@@ -45,8 +45,9 @@ export function CaptureFlow() {
     setStep("reading");
     try {
       const blob = await cropAndCompress(photo, crop);
+      const image = await blobToDataUrl(blob);
       const analysis = await analyzeHymnal(blob);
-      saveChart({ analysis });
+      saveChart({ analysis, image });
       router.push("/chart");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn’t read this page.");
@@ -55,7 +56,7 @@ export function CaptureFlow() {
   }
 
   return (
-    <PhoneShell>
+    <PhoneShell wide>
       {step === "home" && (
         <CameraCapture
           onPhoto={onPhoto}

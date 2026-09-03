@@ -7,20 +7,69 @@ import { flattenApiError, generateHymnalJson } from "@/lib/gemini";
 import { parseJsonFromText, validateAnalysis } from "@/lib/validate";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 
-async function analyzeWithGemini(base64: string, mimeType: string) {
-  const apiKey = readKey("GEMINI_API_KEY");
-  const text = await generateHymnalJson({
+async function readOnce(
+  apiKey: string,
+  base64: string,
+  mimeType: string,
+  thinkingLevel: "low" | "medium",
+  extraPrompt = "",
+) {
+  const result = await generateHymnalJson({
     apiKey,
     base64,
     mimeType,
-    prompt: `${HYMNAL_SYSTEM_PROMPT}\n\n${HYMNAL_USER_PROMPT}`,
+    thinkingLevel,
+    prompt: `${HYMNAL_SYSTEM_PROMPT}\n\n${HYMNAL_USER_PROMPT}${extraPrompt}`,
   });
-  return parseJsonFromText(typeof text === "string" ? text : JSON.stringify(text));
+  const raw = parseJsonFromText(result.text);
+  logRaw(raw);
+  return {
+    raw,
+    truncated: result.truncated,
+  };
+}
+
+function rawBarCount(raw: unknown) {
+  return Array.isArray((raw as { bars?: unknown }).bars)
+    ? (raw as { bars: unknown[] }).bars.length
+    : 0;
+}
+
+async function analyzeWithGemini(base64: string, mimeType: string) {
+  const apiKey = readKey("GEMINI_API_KEY");
+  const first = await readOnce(apiKey, base64, mimeType, "low");
+  const firstBars = rawBarCount(first.raw);
+  if (firstBars >= 6) return first;
+
+  console.info(`[analyze] only ${firstBars} bars, retrying for the full page`);
+  return readOnce(
+    apiKey,
+    base64,
+    mimeType,
+    "medium",
+    `\n\nCRITICAL: The previous read returned only ${firstBars} measure(s). A hymnal page almost always has 8–16 printed measures. Walk every system top to bottom, left to right, and return one bars[] item for EVERY visible measure. Do not stop after the first chord.`,
+  );
+}
+
+function logRaw(raw: unknown) {
+  if (!raw || typeof raw !== "object") {
+    console.info("[analyze raw]", typeof raw);
+    return;
+  }
+  const value = raw as Record<string, unknown>;
+  const bars = Array.isArray(value.bars) ? value.bars : [];
+  console.info(
+    "[analyze raw]",
+    value.title ?? "(untitled)",
+    value.key,
+    `${bars.length} raw bars`,
+    bars[0] ? Object.keys(bars[0] as object).join(",") : "none",
+  );
 }
 
 async function analyzeWithOpenAI(base64: string, mimeType: string) {
@@ -28,6 +77,7 @@ async function analyzeWithOpenAI(base64: string, mimeType: string) {
   const response = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o",
     temperature: 0.2,
+    max_tokens: 8192,
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: HYMNAL_SYSTEM_PROMPT },
@@ -93,10 +143,19 @@ export async function POST(request: Request) {
   const base64 = buffer.toString("base64");
 
   try {
-    const raw = geminiKey
+    const result = geminiKey
       ? await analyzeWithGemini(base64, mimeType)
-      : await analyzeWithOpenAI(base64, mimeType);
-    const analysis = validateAnalysis(raw);
+      : {
+          raw: await analyzeWithOpenAI(base64, mimeType),
+          truncated: false,
+        };
+    const analysis = validateAnalysis(result.raw, result.truncated);
+    console.info(
+      "[analyze]",
+      analysis.title ?? "(untitled)",
+      analysis.key,
+      `${analysis.bars.length} bars`,
+    );
 
     if (analysis.bars.length === 0) {
       return Response.json(
